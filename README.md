@@ -27,7 +27,7 @@ domaina.com:5000
 domainb.org:1000
 ```
 
-Size is in MB, so this would allow domaina.com to have 5GB, and domainb.org 1GB
+Size is in MB, so this would limit each mailbox in domaina.com to 5GB while mailboxes in domainb.org are limited to 1GB.
 
 ## Exim config
 
