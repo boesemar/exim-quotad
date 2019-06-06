@@ -13,11 +13,11 @@ To save on IO it will cache the result using memcached.
 It has a whitelist REGEX if you want to allow certain senders to bypass quota limits. For
 example your helpdesk might still want to exchange email with the users.
 
-You need a local memcached (debian default config works)
-You need to install dalli (gem install dalli)
+You need a local memcached (debian default config works).
+You need to install dalli ruby-gem (gem install dalli).
 
-Make you run this as a user that has read permissions to EMAIL_DIRECTORY
-and full access to the DIRECTORY.
+Open the file and edit the constants in the top section, create the directoryies and the quota file.
+Then run this as a user that has read permissions to EMAIL_DIRECTORY and full access to the DIRECTORY.
 
 ## QUOTA_DIRECTORY
 If you host multiple domains you can define quota per domain
@@ -51,7 +51,12 @@ This will temporarily deny the message, if you want to give a permanent error re
 You can run exim-quotad with -d, this will listen on another port and output logs on STDOUT.
 Then run
 ```
-  telnet localhost 2627
+  telnet localhost 2627  
+```
+Then Type
+
+```
+check_quota a.user@mydomain-xyz.abc sender@address.com
 ```
 
 ## Credits
