@@ -1,11 +1,15 @@
 # Exim Quota Daemon
 
-This is a simple daemon that can interact with exim using the readsocket interface.
+This program can enfoce quota limits on RCPT time for exim.
+
+This is a simple daemon that interacts with exim using the readsocket interface.
 It only supports one command: check_quota <email address> <sender address> and will
 return "0" or "1" depending if the defined quota was exceeded or not.
 If first time exceeded it will send an email to <email address> to inform that the quota
 is exceed and mail is rejected.
+ 
 To save on IO it will cache the result using memcached.
+
 It has a whitelist REGEX if you want to allow certain senders to bypass quota limits. For
 example your helpdesk might still want to exchange email with the users.
 
