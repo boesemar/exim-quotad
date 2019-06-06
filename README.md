@@ -1,4 +1,4 @@
-= Exim Quota Daemon
+# Exim Quota Daemon
 
 This is a simple daemon that can interact with exim using the readsocket interface.
 It only supports one command: check_quota <email address> <sender address> and will
@@ -15,7 +15,7 @@ You need to install dalli (gem install dalli)
 Make you run this as a user that has read permissions to EMAIL_DIRECTORY
 and full access to the DIRECTORY.
 
-== QUOTA_DIRECTORY
+## QUOTA_DIRECTORY
 If you host multiple domains you can define quota per domain
 The QUOTA_DIRECTORY is one file that looks like:
 domaina.com:5000
@@ -23,7 +23,7 @@ domainb.org:1000
 
 Size is in MB, so this would allow domaina.com to have 5GB, and domainb.org 1GB
 
-== Exim config
+## Exim config
 
 Add somewhere in the top section of exim.conf :
 
@@ -38,14 +38,14 @@ Then add to the acl "acl_check_rcpt"
 
 This will temporarily deny the message, if you want to give a permanent error replace defer with deny.
 
-== Testing
+## Testing
 
 You can run exim-quotad with -d, this will listen on another port and output logs on STDOUT.
 Then run
   telnet localhost 2627
 
 
-== Credits
+## Credits
 
 Martin Boese <mboese@mailbox.org>
 
