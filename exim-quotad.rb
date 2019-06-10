@@ -1,6 +1,7 @@
 #!/usr/bin/env ruby
 
-
+# Documentation:
+# https://github.com/boesemar/exim-quotad
 
 ###################################################################
 #####################   CUSTOMIZE HERE    #########################
@@ -15,14 +16,19 @@ LISTEN_PORT_DEBUG = 2627   # if called with -d
 
 CACHE_TIME = 300	# how long to keep quota before re-calculating
 
+WARNING_LIMIT = 0.9	# If quota is > that availabel one this will send the warning email
+
 # Do not apply quota if sender matches this REGEX
 WHITELIST_SENDER_REGEX = /mailprovider-123.xyz$/
 
-# Define the warning email. You can use %used% , %limit% and %email% placeholders
-WARNING_EMAIL_SUBJECT = "Warning: Quota Exceeded"
-WARNING_EMAIL_FROM = "Email Service <noreply@mailprovider-123.xyz>"
-WARNING_EMAIL_BODY = <<-TEND
-This is an automated message from your friendly email service provider.
+
+# Define the blocked email, telling a customer that we don't accept more email.
+#  You can use %used% , %limit%, %percent% and %email% placeholders
+BLOCKED_EMAIL_SUBJECT = "URGENT: Quota Exceeded"
+BLOCKED_EMAIL_FROM = "Email Service <noreply@mailprovider-123.xyz>"
+BLOCKED_EMAIL_BODY = <<-TEND
+
+This is an automated message by your email provider.
 
 You have exceeded your Mailbox quote for Email %email% .
 
@@ -36,9 +42,26 @@ We recommend to setup your email client to delete emails from the server
 at least after 14 days once they are downloaded. Please refer to the
 settings of your email client how this can be done.
 
-Any questions, please give us a call at 123132123
+TEND
 
-Email: support@mailprovider-123.xyz
+
+
+# Define the warning email. You can use %used% , %limit%, %percent% and %email% placeholders
+WARNING_EMAIL_SUBJECT = "WARNING: Low storage for your email"
+WARNING_EMAIL_FROM = "Email Service <noreply@mailprovider-123.xyz>"
+WARNING_EMAIL_BODY = <<-TEND
+This is an automated message by the ITA email service.
+
+You are running low on storage for your email %email% .
+
+You are currently using %percent% of your available storage space of %limit%.
+
+Please ugently delete old emails from the server - once the limit is reached
+we will not be able to accept new email.
+
+We recommend to setup your email client to delete emails from the server
+at least after 60 days once they are downloaded. Please refer to the
+settings of your email client how this can be done.
 
 TEND
 
@@ -62,26 +85,22 @@ def log(txt)
 end
 
 ############### Warning stuff ######################
-# if a user account has no quote we'll send a warning email
-# and remember that we are in warning state by creating one
-# file in the in_warning directory.
-#
-def warning_file(email)
-  "#{DIRECTORY}/in_warning/#{email}"
+def state_file(email, type='warning')
+ "#{DIRECTORY}/in_#{type}/#{email}"
 end
 
-def in_warning?(email)
-  return File.exist?(warning_file(email))
+def in_state?(email, type='warning')
+  return File.exist?(state_file(email, type))
 end
 
-def enter_warning(email)
-  File.open(warning_file(email),'w') do |f|
+def enter_state(email,type)
+  File.open(state_file(email, type),'w') do |f|
     f << Time.now.to_s
   end
 end
 
-def leave_warning(email)
-  fn = warning_file(email)
+def leave_state(email, type)
+  fn = state_file(email, type)
   File.unlink(fn) if File.exist?(fn)
 end
 
@@ -89,65 +108,71 @@ def bytes2gb(bytes)
   "%.2f GB" % (bytes.to_f / (1000 * 1000 * 1000))
 end
 
-# This will deliver the warning email if not yet done.
-def check_warning(email)
-  return if in_warning?(email)
+# This will deliver one email using the mail command
+def send_email(to, from, subject, body, variables)
+  m = body
+  s = subject
+  variables.each do |k,v|
+    m = m.gsub("%#{k}%", v)
+    s = s.gsub("%#{k}%", v)
+  end
 
-  used = check_size(email2directory(email),1_000_000_000_000)
-  limit = get_limit_for_domain(email.split('@').last)
+  log "#{to} - Sending email '#{s}'\n#{m}"
 
-  message = WARNING_EMAIL_BODY
-
-  message = message.gsub('%limit%', bytes2gb(limit))
-  message = message.gsub('%used%', bytes2gb(used))
-  message = message.gsub('%email%', email)
-
-  log "#{email} - Sending warning: \n #{message}"
-
-  IO.popen(["mail", "-s", WARNING_EMAIL_SUBJECT, "-a",
-            "from: #{WARNING_EMAIL_FROM}", email],"r+") do |io|
-     io.write message
+  IO.popen(["mail", "-s", s, "-a",
+            "From: #{from}", to],"r+") do |io|
+     io.write m
      io.close_write
      io.close
 
      if $?.to_i != 0 then
-       log "#{email} - Error sending email - mail command failed"
+       log "#{to} - Error sending email - mail command failed"
      end
   end
-
-  enter_warning(email)
 end
 
+
+def send_blocked_email(email, used, limit)
+  return if in_state?(email, 'blocked')
+
+  used = check_size(email2directory(email),1_000_000_000_000)
+
+  send_email(email, BLOCKED_EMAIL_FROM, BLOCKED_EMAIL_SUBJECT, BLOCKED_EMAIL_BODY,
+     { 'limit' => bytes2gb(limit),
+       'used'  => bytes2gb(used),
+       'percent' => ("%.2f" % (used.to_f/limit)),
+       'email' => email
+     })
+end
+
+# this will send the warning email
+def send_warning_email(email, used, limit)
+  return if in_state?(email, 'warning')
+  rate = (used.to_f / limit)
+
+  send_email(email, WARNING_EMAIL_FROM, WARNING_EMAIL_SUBJECT, WARNING_EMAIL_BODY,
+     {
+       'limit' => bytes2gb(limit),
+       'used' => bytes2gb(used),
+       'percent' => ("%.2f%" % (rate*100)),
+       'email' => email
+     })
+end
+
+
 class Memcache
-  require 'dalli'
   def initialize
-    @dalli = Dalli::Client.new('localhost:11211:10', :threadsafe => true)
+    @data = {}
   end
 
-  def set(key,value,ttl=300)
-    begin
-      @dalli.set(key, value, ttl)
-    rescue Dalli::RingError => e
-      return false
-    end
-  end
+  def value(key, ttl = 300, &block)
+    v = @data[key] || {:ttl=>0,:val => nil}
 
-  def get(key)
-    begin
-      @dalli.get(key)
-    rescue Dalli::RingError => e
-      return nil
+    if (v[:ttl] < Time.now.to_i) then
+      new_value = block.call
+      @data[key] = { :ttl=>(Time.now.to_i + ttl), :val => new_value }
     end
-  end
-
-  def value(key,ttl=300,&block)
-    old_value = get(key)
-    return old_value unless old_value.nil?
-    new_value = block.call
-    if !set(key,new_value, ttl) then
-      new_value
-    end
-    new_value
+    @data[key][:val]
   end
 end
 
@@ -206,26 +231,6 @@ def get_limit_for_domain(domain)
   return DEFAULT_QUOTA
 end
 
-# returns true or false weather user has quota or not
-def check_quota(email)
-  u, d = email.split('@').map { |x| x.downcase }
-  defined_quota = get_limit_for_domain(d)
-  log "#{email} - Limit for #{d} = #{bytes2gb(defined_quota)}"
-  dir = email2directory(email)
-  log "#{email} - directory is: #{dir}"
-  if !File.directory?(dir) then
-    raise QuotaError, "Can't find user directory #{dir}"
-  end
-  begin
-    size = check_size(dir, defined_quota)
-    log "#{email} - using #{bytes2gb(size)} - OK"
-  rescue QuotaExceeded => e
-    log "#{email} - check_quota: Quota Exceeded"
-    return false
-  end
-  true
-end
-
 
 begin
   if $debug then
@@ -239,12 +244,11 @@ rescue => e
   exit
 end
 
+mc = Memcache.new
 loop do
   Thread.fork(server.accept) do |client|
 #  begin
 #    client = server.accept
-    mc = Memcache.new
-
 
     command = client.gets.strip.downcase
     if command =~ /^check_quota\s(.*)/ then
@@ -253,33 +257,64 @@ loop do
       email = email_and_sender.split(' ')[0]
       sender = email_and_sender.split(' ')[1]
 
-      whitelist = false
-
       if sender.to_s =~ WHITELIST_SENDER_REGEX then
         log "#{email} Whitelist sender: #{sender}"
-        quota = true
+        quota = {:defined_quota => nil, :used => 0, :result => :whitelist }
       else
         log "#{email} - Checking Quota"
+
+
         quota = mc.value(email, CACHE_TIME) do
+          result = {:defined_quota => nil, :used => 0, :result => :undefined }
+
           log "#{email} - Recalculating..."
-          result  = begin
-             check_quota(email)
-          rescue QuotaError => e
-             log "#{email} - Error: #{e}"
-             true
+          u, d = email.split('@').map { |x| x.downcase }
+          defined_quota = get_limit_for_domain(d)
+          result[:defined_quota] =  defined_quota
+
+          log "#{email} - Limit for #{d} = #{bytes2gb(defined_quota)}"
+          dir = email2directory(email)
+          log "#{email} - directory is: #{dir}"
+          if !File.directory?(dir) then
+            log  "#{email} - Can't find user directory #{dir}"
+            next result
+          end
+
+          size = 0
+          begin
+            size = check_size(dir, defined_quota)		# check size raises QuotaExceed if counting is above defined_quota
+            result[:used] = size
+            if (size.to_f / defined_quota) > WARNING_LIMIT then
+              result[:result] = :warn
+            else
+              result[:result] = :good
+            end
+          rescue QuotaExceeded => e
+            result[:used] = result[:defined_quota]
+            result[:result] = :block
           end
           result
         end
 
-        if !quota then
-          check_warning(email)
-        else
-          leave_warning(email)
+        log "#{email} - #{bytes2gb(quota[:used])}/#{bytes2gb(quota[:defined_quota])} - #{quota[:result].inspect}"
+        case quota[:result]
+        when :good then
+          leave_state(email, 'warning')
+          leave_state(email, 'blocked')
+        when :warn then
+          send_warning_email(email, quota[:used], quota[:defined_quota])
+          leave_state(email, 'blocked')
+          enter_state(email, 'warning')
+        when :block then
+          send_blocked_email(email, quota[:used], quota[:defined_quota])
+          enter_state(email, 'blocked')
+          leave_state(email, 'warning')
         end
-      end
 
-      log "#{email} Result: #{quota ? 'GOOD' : 'QUOTA-EXCEEDED'}"
-      client.print quota ? "0" : "1"	# 0 == OK, 1 = NO QUOTA
+      end # if whitelist
+
+      log "#{email} Result: #{quota[:result] == :block ? 'BLOCK' : 'ACCEPT'}"
+      client.print quota[:result] == :block ? "1" : "0"	# 0 == OK, 1 = NO QUOTA
     elsif command =~ /^ping/i then
       client.puts "pong!"
     else

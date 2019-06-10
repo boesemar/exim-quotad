@@ -8,13 +8,12 @@ return "0" or "1" depending if the defined quota was exceeded or not.
 If first time exceeded it will send an email to <email address> to inform that the quota
 is exceed and mail is rejected.
  
-To save on IO it will cache the result using memcached.
+To save on IO it will cache the result locally.
 
 It has a whitelist REGEX if you want to allow certain senders to bypass quota limits. For
 example your helpdesk might still want to exchange email with the users.
 
-You need a local memcached (debian default config works).
-You need to install dalli ruby-gem (gem install dalli).
+Except standard ruby, no dependencies.
 
 Open the file and edit the constants in the top section, create the directoryies and the quota file.
 Then run this as a user that has read permissions to EMAIL_DIRECTORY and full access to the DIRECTORY.
